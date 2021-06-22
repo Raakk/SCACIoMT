@@ -1,0 +1,111 @@
+(***Channel representing the consortium blockchain***)
+free Cb:channel.
+
+(***Secure channel for registration***)
+free C:channel [private].
+
+(***Symmetric key encryption***)
+type key.
+fun senc(bitstring, key): bitstring.
+reduc forall m: bitstring, k: key; sdec(senc(m,k),k) = m.
+
+(***Asymmetric key encryption***)
+type sskey.
+type spkey.
+fun pk(sskey): spkey.
+fun aenc (bitstring , spkey): bitstring.
+reduc forall m: bitstring, sk: sskey; adec(aenc(m, pk(sk)), sk) = m.
+
+(***Digital Signature***)
+type skey.
+type pkey.
+fun spk(skey): pkey.
+fun sign(bitstring, skey): bitstring.
+reduc forall x: bitstring, y: skey; checksign(sign(x,y), spk(y)) = x.
+
+(***PUF***)
+fun PUF(bitstring, key):bitstring.
+
+(***Hash functions***)
+fun H(bitstring): bitstring.
+
+(***Ethereum address***)
+type address.
+
+(***Data sent***)
+free Data: bitstring [private].
+
+(***Secret key for data encryption***)
+free S: key [private].
+
+(***Data type converters***)
+fun address_to_key(address):skey [data,typeConverter].
+fun address_to_bitstring(address):bitstring [data,typeConverter].
+fun bitstring_to_address(bitstring):address [data,typeConverter].
+
+(***Authentication queries***)
+event beginAuth(bitstring, address).
+event endAuth(bitstring, address).
+event beginFWV(bitstring, bitstring).
+event endFWV(bitstring, bitstring).
+event Send_data(bitstring).
+
+query x:bitstring, y:address; inj-event(endAuth(x,y)) ==> inj-event(beginAuth(x,y)).
+query x:bitstring, y:bitstring; inj-event(endFWV(x,y)) ==> inj-event(beginFWV(x,y)).
+query x:bitstring, y:bitstring, z:bitstring; inj-event(Send_data(x)) ==> inj-event(endFWV(y,z)).
+
+(***Secrecy queries***)
+query attacker(Data).
+
+
+(***-------------------------------------------------------------------------------------------***)
+(***SCACIoMT Process***)
+
+let processSCACIoMT(SKd:sskey, add_MN:address, FW:bitstring) =
+
+new SK_PUF: key; new SKan: sskey; new SSKd: skey; new Tx1: bitstring;
+
+(***Initialization phase***)
+(***The CA sets the PUF challenge Ci for the IoMT device in accordance with the manufacturer***)
+new Ci: bitstring;
+out(C, Ci);
+(*The CA determines the PUF response and generates the address of the patient linked to the IoMT device and sends them to the patient*)
+in(C, XCi: bitstring);
+let R = PUF(H(XCi),SK_PUF)in
+let add = bitstring_to_address(H(XCi))in
+out(C, (XCi, add));
+(*The patient receives the credentials via the same channel*)
+in(C, (XXCi: bitstring, Xadd: address));
+(*The patient calculates the device's PUF response*)
+let XR = PUF(H(XXCi),SK_PUF)in
+
+(***Authentication phase***)
+(***The patient encrypts his credentials with the AN's public key and sends a transaction to the blockchain with his signature***)
+let Enc_R= sign(aenc(XR, pk(SKan)), SSKd)in
+let Enc_add= sign(aenc(address_to_bitstring(Xadd), pk(SKan)), SSKd) in
+out(Cb, (Enc_R, Enc_add));
+(*The AN receives the credentials, verifies the signature and decrypts them*)
+in(Cb,(XXR: bitstring, XXadd: address));
+event beginAuth(XXR, XXadd);
+let (X1: bitstring)= checksign(adec(XXR, SKan),spk(SSKd)) in
+let (X2: bitstring)= checksign(adec(address_to_bitstring(XXadd), SKan),spk(SSKd)) in
+(***The AN verifies the validity of the patient/device credentials, emits the event endAuth in case of a successful authentication***)
+if X1=PUF(X2,SK_PUF) then 
+(event endAuth(XXR, XXadd);
+
+(***FW verification and sending data Phase***)
+in(Cb, (FW1:bitstring, Tx2:bitstring));
+event beginFWV(FW1,Tx2);
+if (H(FW1) = H(FW)) && (checksign(sign(Tx2,address_to_key(add_MN)), spk(address_to_key(add_MN))) = Tx2) then
+event endFWV(FW1,Tx2);
+new data: bitstring;
+let data = senc(Data, S) in
+out(Cb, data);
+event Send_data(data)).
+
+
+(***---------------------------------------------------------------------------------------------***)
+(***Main Process***)
+process
+	new skeyy: sskey ; new am:address; new fwx:bitstring; 
+	(!processSCACIoMT(skeyy, am, fwx))
